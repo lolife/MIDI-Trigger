@@ -44,8 +44,6 @@ bool lastDisplayTriggered = false;
 int screenWidth = 0;
 int screenHeight = 0;
 
-void centerCursor( const lgfx::GFXfont* font, int size, const char* text );
-
 int getFilteredADC() {
     // Read raw value
     int raw = analogRead(TRIGGER_PIN) - zeroPoint;
@@ -221,13 +219,4 @@ void loop() {
         lastDisplayUpdate = now;
         lastDisplayTriggered = false;
     }
-}
-
-void centerCursor( const lgfx::GFXfont* font, int size, const char* text ) {
-    M5.Display.setFont(font);
-    M5.Display.setTextSize(size);
-    int textWidth = M5.Display.textWidth(text);
-    int textHeight = M5.Display.fontHeight();
-    M5.Display.setCursor((M5.Display.width() - textWidth) / 2,
-                        (M5.Display.height() - textHeight) / 2);
 }
