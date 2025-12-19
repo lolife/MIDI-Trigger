@@ -1,16 +1,21 @@
 #include <M5Unified.h>
 #include <M5UnitSynth.h>
 
-M5UnitSynth synth;
+#define RX_PIN 18
+#define TX_PIN 17
+#define BAUD_RATE 31250
 
-const int KICK  = 36;
-const int SNARE = 40;
-const int RIDE  = 51;
+#define TRIGGER_PIN G9
+
+#define KICK 36
+#define SNARE 40
+#define RIDE 51
 
 int currentNote = RIDE;
 char currentNoteName[16] = "Ride";
 
-const int ANALOG_PIN = G9;
+M5UnitSynth synth;
+
 const int THRESHOLD = 175;
 const int HYSTERESIS = 5;        // Signal must drop this far below threshold to reset
 const int MIN_TRIGGER_DURATION = 3; // Signal must stay above threshold for this many samples
@@ -43,7 +48,7 @@ void centerCursor( const lgfx::GFXfont* font, int size, const char* text );
 
 int getFilteredADC() {
     // Read raw value
-    int raw = analogRead(ANALOG_PIN) - zeroPoint;
+    int raw = analogRead(TRIGGER_PIN) - zeroPoint;
     
     // Update circular buffer
     filterBuffer[filterIndex] = raw;
@@ -130,14 +135,14 @@ void setup() {
     screenWidth = M5.Display.width();
     screenHeight = M5.Display.height();
     
-    synth.begin(&Serial2, 31250, 18, 17);
+    synth.begin( &Serial2, BAUD_RATE, TX_PIN, RX_PIN );
     drawUI();
-    pinMode( ANALOG_PIN, INPUT_PULLDOWN );
+    pinMode( TRIGGER_PIN, INPUT_PULLDOWN );
     
     // Calibrate zero point with more samples
     int total = 0;
     for (int i = 0; i < 50; i++) {
-        total += analogRead(ANALOG_PIN);
+        total += analogRead(TRIGGER_PIN);
         delay(10);
     }
     zeroPoint = total / 50;
