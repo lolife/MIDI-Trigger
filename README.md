@@ -11,4 +11,6 @@ to SEPERATE.
 Currently it only supports 1 trigger to 1 MIDI note. The velocity is mapped from the
 trigger. The latency is extremely low. Try it out and let me know what you think!
 
+Made with the assistance of claude.ai.
+
 Michael Koppelman <michael.koppelman@gmail.com>
