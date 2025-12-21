@@ -10,9 +10,11 @@
 #define KICK 36
 #define SNARE 40
 #define RIDE 51
+#define CONGA_HI 51
+#define CONGA_LOW 59
 
-int currentNote = RIDE;
-char currentNoteName[16] = "Ride";
+int currentNote = 37;
+char currentNoteName[32] = "Rim";
 
 M5UnitSynth synth;
 
@@ -86,11 +88,10 @@ void updateDisplay(int adc, int velocity, int note, bool triggered) {
     int left = screenWidth/2;
     int pad = M5.Display.fontHeight() + 12;
 
+    M5.Display.fillRect( left, top+pad, screenWidth/2, pad*23-5, TFT_BLACK );
     M5.Display.setTextColor(TFT_SKYBLUE);
     M5.Display.setCursor(left, top + pad*1);
     M5.Display.printf( "%3d - %s", note, currentNoteName);
-
-    M5.Display.fillRect( left, top+pad*2-5, screenWidth/2, pad*2-5, TFT_BLACK );
 
     M5.Display.setTextColor(TFT_GREEN);
     M5.Display.setCursor(left, top + pad*2);
@@ -155,6 +156,7 @@ void setup() {
 }
 
 void loop() {
+    static int loopCounter = 0;
     M5.update();
     
     unsigned long now = millis();
@@ -184,9 +186,9 @@ void loop() {
         if (currentADC < (THRESHOLD - HYSTERESIS)) {
             // Trigger complete - send MIDI
             if (now - lastTrigger > MIN_HIT_INTERVAL) {
-                lastVelocity = map(peakValue, THRESHOLD, 4095-zeroPoint, 32, 132);
-                lastVelocity = constrain(lastVelocity, 1, 127);
-                
+                lastVelocity = map(peakValue, THRESHOLD, 4095-zeroPoint, 24, 127);
+                lastVelocity = constrain(lastVelocity, 24, 127);
+        
                 synth.setNoteOn(0, currentNote, lastVelocity);
                 noteIsOn = true;
                 noteOffTime = now + NOTE_DURATION;
