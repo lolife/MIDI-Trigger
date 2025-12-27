@@ -1,110 +1,89 @@
-#define NOTE_B0  23
-#define NOTE_C1  24
-#define NOTE_CS1 25
-#define NOTE_D1  26
-#define NOTE_DS1 27
-#define NOTE_E1  28
-#define NOTE_F1  29
-#define NOTE_FS1 30
-#define NOTE_G1  31
-#define NOTE_GS1 32
-#define NOTE_A1  33
-#define NOTE_AS1 34
-#define NOTE_B1  35
-#define NOTE_C2  36
-#define NOTE_CS2 37
-#define NOTE_D2  38
-#define NOTE_DS2 39
-#define NOTE_E2  40
-#define NOTE_F2  41
-#define NOTE_FS2 42
-#define NOTE_G2  43
-#define NOTE_GS2 44
-#define NOTE_A2  45
-#define NOTE_AS2 46
-#define NOTE_B2  47
-#define NOTE_C3  48
-#define NOTE_CS3 49
-#define NOTE_D3  50
-#define NOTE_DS3 51
-#define NOTE_E3  52
-#define NOTE_F3  53
-#define NOTE_FS3 54
-#define NOTE_G3  55
-#define NOTE_GS3 56
-#define NOTE_A3  57
-#define NOTE_AS3 58
-#define NOTE_B3  59
-#define NOTE_C4  60
-#define NOTE_CS4 61
-#define NOTE_D4  62
-#define NOTE_DS4 63
-#define NOTE_E4  64
-#define NOTE_F4  65
-#define NOTE_FS4 66
-#define NOTE_G4  67
-#define NOTE_GS4 68
-#define NOTE_A4  69
-#define NOTE_AS4 70
-#define NOTE_B4  71
-#define NOTE_C5  72
-#define NOTE_CS5 73
-#define NOTE_D5  74
-#define NOTE_DS5 75
-#define NOTE_E5  76
-#define NOTE_F5  77
-#define NOTE_FS5 78
-#define NOTE_G5  79
-#define NOTE_GS5 80
-#define NOTE_A5  81
-#define NOTE_AS5 82
-#define NOTE_B5  83
-#define NOTE_C6  84
-#define NOTE_CS6 85
-#define NOTE_D6  86
-#define NOTE_DS6 87
-#define NOTE_E6  88
-#define NOTE_F6  89
-#define NOTE_FS6 90
-#define NOTE_G6  91
-#define NOTE_GS6 92
-#define NOTE_A6  93
-#define NOTE_AS6 94
-#define NOTE_B6  95
-#define NOTE_C7  96
-#define NOTE_CS7 97
-#define NOTE_D7  98
-#define NOTE_DS7 99
-#define NOTE_E7  100
-#define NOTE_F7  101
-#define NOTE_FS7 102
-#define NOTE_G7  103
-#define NOTE_GS7 104
-#define NOTE_A7  105
-#define NOTE_AS7 106
-#define NOTE_B7  107
-#define NOTE_C8  108
-#define NOTE_CS8 109
-#define NOTE_D8  110
-#define NOTE_DS8 111
-#define REST     0
-
 #include <Arduino.h>
 #include <M5Unified.h>
 #include "M5UnitSynth.h"
-//#include "instrument_names.h"
+#include <ArduinoOTA.h>
 
-// Create MIDI object - uses Serial2 by default (Grove port)
-M5UnitSynth midi;
+#define FILTER_SIZE 5
 
-int TRIGGER1_PIN = G8;
+// Button definitions
+struct Button {
+     int x;
+     int y;
+     int w; 
+     int h;
+     int colorOff;
+     int colorOn;
+    const char* label;
+};
 
-bool running = false;
-int screenHeight = 0;
+struct Trigger {
+    int pin;
+    int zeroPoint = 0;
+    int note = 36;;
+    int filterBuffer[FILTER_SIZE] = {0};
+    int filterIndex = 0;
+    unsigned long lastTrigger = 0;
+    unsigned long noteOffTime = 0;
+    bool noteIsOn = false;
+    bool wasAboveThreshold = false;
+    int lastVelocity = 0;
+    int currentADC = 0;
+    int peakValue = 0;
+    int samplesAboveThreshold = 0;
+    bool lastDisplayTriggered = false;
+    Button* triggerButton;
+};
+
+//#define ARDUINO_M5STACK_CORES2
+
+#define BAUD_RATE 31250
+
+#if defined(ARDUINO_M5STACK_CORES2)
+#define TRIGGER_PIN1 G36
+#define TRIGGER_PIN2 G26
+#define RX_PIN 13
+#define TX_PIN 14
+#elif defined(ARDUINO_M5STACK_CORES3)
+#define TRIGGER_PIN1 G8
+#define TRIGGER_PIN2 G9
+#define RX_PIN 18
+#define TX_PIN 17
+#endif
+
+#define KICK 36
+#define SNARE 40
+#define RIDE 51
+#define CONGA_HI 51
+#define CONGA_LOW 59
+
+int currentNote = KICK;
+char currentNoteName[32] = "Kick";
+
+M5UnitSynth synth;
+
+const int THRESHOLD = 175;
+const int HYSTERESIS = 5;        // Signal must drop this far below threshold to reset
+const int MIN_TRIGGER_DURATION = 3; // Signal must stay above threshold for this many samples
+const int MIN_HIT_INTERVAL = 60;
+const int NOTE_DURATION = 60;
+
+// Display update throttling
+#define NORMAL_COLOR TFT_OLIVE
+unsigned long lastDisplayUpdate = 0;
+const int DISPLAY_UPDATE_INTERVAL = 250;
+
 int screenWidth = 0;
+int screenHeight = 0;
 
-static int currentBPM = 80;
-static int currentInstrument = 1;
-
-const char* get_instrument_name(int instrument);
-void update_note_display( int note, int bar, int beat );
+bool initializeWiFi();
+int calibrateTrigger( int inputPin );
+int getFilteredADC( Trigger* newTrigger  );
+void handleTrigger( Trigger* newTrigger );
+void initializeTrigger( Trigger* newTrigger, int pin, int note, Button* tButton );
+void initializeFilterBuffer( Trigger* newTrigger );
+void drawUI();
+void updateDisplay();
+void handleTouchInput();
+void drawButton( Button* btn, bool isOn );
+void displayMessage(const char* msg);
+void centerCursor(const lgfx::GFXfont* font, int size, const char* text);

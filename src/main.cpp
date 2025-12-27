@@ -1,63 +1,28 @@
-#include <M5Unified.h>
-#include <M5UnitSynth.h>
+#include "main.h"
+//#include "credentials.h"
 
-#define RX_PIN 18
-#define TX_PIN 17
-#define BAUD_RATE 31250
+static Button downButton1 = {10, 100, 60, 60, BLUE, BLUE, "-" };
+static Button upButton1 = {75, 100, 60, 60, BLUE, BLUE, "+" }; // x and y are adjused in setup()
+static Button triggerButton1 = {10, 100, 125, 60, DARKGREY, RED, "WAITING"};
+static Button upButton2 = {50, 50, 60, 60, BLUE, BLUE, "+" }; // x and y are adjused in setup()
+static Button downButton2 = {115, 100, 60, 60, BLUE, BLUE, "-" };
+static Button triggerButton2 = {50, 100, 125, 60, DARKGREY, RED, "WAITING"};
 
-#define TRIGGER_PIN G9
+static Trigger trigger1;
+static Trigger trigger2;
 
-#define KICK 36
-#define SNARE 40
-#define RIDE 51
-#define CONGA_HI 51
-#define CONGA_LOW 59
-
-int currentNote = 37;
-char currentNoteName[32] = "Rim";
-
-M5UnitSynth synth;
-
-const int THRESHOLD = 175;
-const int HYSTERESIS = 5;        // Signal must drop this far below threshold to reset
-const int MIN_TRIGGER_DURATION = 3; // Signal must stay above threshold for this many samples
-const int MIN_HIT_INTERVAL = 60;
-const int NOTE_DURATION = 60;
-
-unsigned long lastTrigger = 0;
-unsigned long noteOffTime = 0;
-bool noteIsOn = false;
-bool wasAboveThreshold = false;
-int lastVelocity = 0;
-int currentADC = 0;
-int zeroPoint = 0;
-int peakValue = 0;
-int samplesAboveThreshold = 0;
-
-// Moving average filter
-const int FILTER_SIZE = 5;
-int filterBuffer[FILTER_SIZE] = {0};
-int filterIndex = 0;
-
-// Display update throttling
-unsigned long lastDisplayUpdate = 0;
-const int DISPLAY_UPDATE_INTERVAL = 100;
-bool lastDisplayTriggered = false;
-int screenWidth = 0;
-int screenHeight = 0;
-
-int getFilteredADC() {
+int getFilteredADC( Trigger* newTrigger ) {
     // Read raw value
-    int raw = analogRead(TRIGGER_PIN) - zeroPoint;
+    int raw = analogRead(newTrigger->pin) - newTrigger->zeroPoint;
     
     // Update circular buffer
-    filterBuffer[filterIndex] = raw;
-    filterIndex = (filterIndex + 1) % FILTER_SIZE;
+    newTrigger->filterBuffer[newTrigger->filterIndex] = raw;
+    newTrigger->filterIndex = (newTrigger->filterIndex + 1) % FILTER_SIZE;
     
     // Calculate average
     int sum = 0;
     for (int i = 0; i < FILTER_SIZE; i++) {
-        sum += filterBuffer[i];
+        sum += newTrigger->filterBuffer[i];
     }
     return sum / FILTER_SIZE;
 }
@@ -65,7 +30,7 @@ int getFilteredADC() {
 void drawUI() {
     M5.Display.setFont(&FreeSansBold18pt7b);
     int top = 30;
-    int left = 20;
+    int left = 10;
     int pad = M5.Display.fontHeight();
 
     M5.Display.setFont(&Orbitron_Light_32);
@@ -77,148 +42,277 @@ void drawUI() {
     M5.Display.setFont(&FreeSansBold12pt7b);
     pad = M5.Display.fontHeight() + 12;
     M5.Display.setTextColor(TFT_WHITE);
-    M5.Display.drawString("Note:", left, top + pad*1);
-    M5.Display.drawString("Velocity:", left, top + pad*2);
-    M5.Display.drawString("ADC Value:", left, top + pad*3);
+    M5.Display.setCursor( left, top+pad );
+    M5.Display.printf("Note: %d", trigger1.note );
+    M5.Display.setCursor( screenWidth/2, top+pad );
+    M5.Display.printf("Note: %d", trigger2.note );
 }
 
-void updateDisplay(int adc, int velocity, int note, bool triggered) {
-    M5.Display.setFont(&FreeSansBold12pt7b);
-    int top = 30;
-    int left = screenWidth/2;
-    int pad = M5.Display.fontHeight() + 12;
+void updateDisplay() {
+    drawButton( &upButton1, false );
+    drawButton ( &downButton1, false );
+    drawButton( &triggerButton1, false );
 
-    M5.Display.fillRect( left, top+pad, screenWidth/2, pad*23-5, TFT_BLACK );
-    M5.Display.setTextColor(TFT_SKYBLUE);
-    M5.Display.setCursor(left, top + pad*1);
-    M5.Display.printf( "%3d - %s", note, currentNoteName);
-
-    M5.Display.setTextColor(TFT_GREEN);
-    M5.Display.setCursor(left, top + pad*2);
-    M5.Display.printf( "%3d", velocity);
-
-    M5.Display.setTextColor(TFT_YELLOW);
-    M5.Display.setCursor(left, top + pad*3);
-    M5.Display.printf( "%4d [%d]", abs(adc), peakValue );
-    
-    M5.Display.fillRect( screenWidth/4, top + pad*4, screenWidth/2, 50, TFT_BLACK );
-    if (triggered) {
-        M5.Display.setTextColor(TFT_RED);
-        M5.Display.setCursor( screenWidth/2 - M5.Display.textWidth("TRIGGERED!")/2, top + pad*4 );
-        M5.Display.print( "TRIGGERED!" );
-        M5.Display.fillCircle(290, top + pad*4, 8, TFT_RED);
-    } else {
-        M5.Display.setTextColor(TFT_DARKGREY);
-        M5.Display.setCursor( screenWidth/2 - M5.Display.textWidth("Waiting...")/2, top + pad*4 );
-        M5.Display.print( "Waiting..." );
-        M5.Display.fillCircle(290, top + pad*4, 8, TFT_DARKGREY );
-    }
-
-    M5.Display.fillRect(10, 220, screenWidth, 15, TFT_DARKGREY);
-    int barWidth = map( adc, 0, 4095-zeroPoint, 0, screenWidth);
-    int thresh = map(THRESHOLD, 0, 4095-zeroPoint, 0, screenWidth);
-    //Serial.printf("ADC: %d, Bar Width: %d, Threshold: %d\n", adc, barWidth, thresh);
-    if( barWidth > thresh ) {
-        M5.Display.fillRect(10, 220, barWidth, 15, TFT_RED);
-    } else {
-        M5.Display.fillRect(10, 220, barWidth, 15, TFT_ORANGE);
-    }
+    drawButton( &upButton2, false );
+    drawButton ( &downButton2, false );
+    drawButton( &triggerButton2, false );
 }
 
 void setup() {
     Serial.begin(115200);
     auto cfg = M5.config();
     M5.begin(cfg);
-    M5.Display.setRotation(1);
-    //M5.Display.setTextDatum(middle_center);
+
     screenWidth = M5.Display.width();
     screenHeight = M5.Display.height();
-    
+
+    // Connect WiFi and setup time
+    //if (! initializeWiFi())
+    //    displayMessage("No Network");
+
+    int top = screenHeight/2 - 20;
+    downButton1.y = top;
+    upButton1.y = top;
+    triggerButton1.y = top + downButton1.h + 5;
+
+    downButton2.y = top;
+    upButton2.y = top;
+    triggerButton2.y = top + downButton2.h + 5;
+
+    downButton2.x = screenWidth/2;
+    upButton2.x = screenWidth/2 + downButton2.w + 5;
+    triggerButton2.x = screenWidth/2;
+
+
     synth.begin( &Serial2, BAUD_RATE, TX_PIN, RX_PIN );
+
+    initializeTrigger( &trigger1, TRIGGER_PIN2, KICK, &triggerButton1 );
+    initializeTrigger( &trigger2, TRIGGER_PIN1, SNARE, &triggerButton2 );
+
+    Serial.printf("Trigger pin G%d, note %d, zeropoint %d\n", trigger1.pin, trigger1.note, trigger1.zeroPoint );
+    Serial.printf("Trigger pin G%d, note %d, zeropoint %d\n", trigger2.pin, trigger2.note, trigger2.zeroPoint );
+ 
     drawUI();
-    pinMode( TRIGGER_PIN, INPUT_PULLDOWN );
+}
+
+void initializeTrigger( Trigger* newTrigger, int pin, int note, Button* tButton ) {
+    newTrigger->pin = pin;
+    newTrigger->note = note;
+    pinMode( newTrigger->pin, INPUT_PULLDOWN );
+    newTrigger->zeroPoint = calibrateTrigger( newTrigger->pin );
+    initializeFilterBuffer( newTrigger );
+    newTrigger->triggerButton = tButton;
+}
+
+void initializeFilterBuffer( Trigger* newTrigger ) {
+    for (int i = 0; i < FILTER_SIZE; i++) {
+        newTrigger->filterBuffer[i] = 0;
+    }
+}
+
+bool initializeWiFi() {
+    displayMessage("Connecting");
+    WiFi.mode(WIFI_STA);
+    WiFi.begin( WIFI_SSID, WIFI_PASSWORD );
+    WiFi.setAutoReconnect(true);
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+        delay(500);
+        attempts++;
+    }
     
-    // Calibrate zero point with more samples
+    bool connected = (WiFi.status() == WL_CONNECTED);
+    
+    if (connected) {     
+        String ip = WiFi.localIP().toString();
+        displayMessage(ip.c_str());
+    } else {
+        displayMessage("Network failed!");
+        return connected;
+    }
+
+    ArduinoOTA.begin();
+    ArduinoOTA.handle();
+
+    return connected;
+}
+
+int calibrateTrigger( int inputPin ) {
+    // Calibrate zero points
     int total = 0;
     for (int i = 0; i < 50; i++) {
-        total += analogRead(TRIGGER_PIN);
+        total += analogRead( inputPin );
         delay(10);
     }
-    zeroPoint = total / 50;
-    
-    // Initialize filter buffer
-    for (int i = 0; i < FILTER_SIZE; i++) {
-        filterBuffer[i] = 0;
-    }
-    
-    Serial.println("MIDI Trigger Ready");
-    Serial.printf("Zero point: %d\n", zeroPoint);
+    return(total / 50);
 }
 
 void loop() {
     static int loopCounter = 0;
     M5.update();
+
+    handleTouchInput();
     
     unsigned long now = millis();
-    currentADC = getFilteredADC();  // Use filtered value
+    
+    handleTrigger( &trigger1 );
+    handleTrigger( &trigger2 );
+
+    // Throttled display updates
+    if (now - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
+
+        updateDisplay();
+        trigger1.lastDisplayTriggered = false;
+        trigger2.lastDisplayTriggered = false;
+
+        lastDisplayUpdate = now;
+    }
+}
+
+void handleTrigger( Trigger* newTrigger ) {
+    unsigned long now = millis();
+    newTrigger->currentADC = getFilteredADC( newTrigger );  // Use filtered value
     
     // State machine with hysteresis
-    if (!wasAboveThreshold) {
+    if (!newTrigger->wasAboveThreshold) {
         // Waiting for trigger
-        if (currentADC > THRESHOLD) {
-            samplesAboveThreshold++;
-            if (samplesAboveThreshold >= MIN_TRIGGER_DURATION) {
+        if (newTrigger->currentADC > THRESHOLD) {
+            newTrigger->samplesAboveThreshold++;
+            if (newTrigger->samplesAboveThreshold >= MIN_TRIGGER_DURATION) {
                 // Confirmed trigger start
-                wasAboveThreshold = true;
-                peakValue = currentADC;
-                samplesAboveThreshold = 0;
+                newTrigger->wasAboveThreshold = true;
+                newTrigger->peakValue = newTrigger->currentADC;
+                newTrigger->samplesAboveThreshold = 0;
             }
         } else {
-            samplesAboveThreshold = 0;
+            newTrigger->samplesAboveThreshold = 0;
         }
     } else {
         // In triggered state - track peak
-        if (currentADC > peakValue) {
-            peakValue = currentADC;
+        if (newTrigger->currentADC > newTrigger->peakValue) {
+            newTrigger->peakValue = newTrigger->currentADC;
         }
         
         // Wait for signal to drop below threshold minus hysteresis
-        if (currentADC < (THRESHOLD - HYSTERESIS)) {
+        if (newTrigger->currentADC < (THRESHOLD - HYSTERESIS)) {
             // Trigger complete - send MIDI
-            if (now - lastTrigger > MIN_HIT_INTERVAL) {
-                lastVelocity = map(peakValue, THRESHOLD, 4095-zeroPoint, 24, 127);
-                lastVelocity = constrain(lastVelocity, 24, 127);
+            if (now - newTrigger->lastTrigger > MIN_HIT_INTERVAL) {
+                newTrigger->lastVelocity = map(newTrigger->peakValue, THRESHOLD, 4095-newTrigger->zeroPoint, 8, 127);
+                newTrigger->lastVelocity = constrain(newTrigger->lastVelocity, 24, 127);
         
-                synth.setNoteOn(0, currentNote, lastVelocity);
-                noteIsOn = true;
-                noteOffTime = now + NOTE_DURATION;
+                synth.setNoteOn(0, newTrigger->note, newTrigger->lastVelocity);
+                newTrigger->noteIsOn = true;
+                newTrigger->noteOffTime = now + NOTE_DURATION;
+                newTrigger->triggerButton->label = "TRIGGER";
+                drawButton( newTrigger->triggerButton, true );
+                newTrigger->triggerButton->label = "WAITING";
                 
-                //Serial.printf("Trigger! Peak: %d, Velocity: %d\n", peakValue, lastVelocity);
+                Serial.printf("Trigger %d Peak: %d, Velocity: %d\n", newTrigger->note, newTrigger->peakValue, newTrigger->lastVelocity);
                 
-                lastTrigger = now;
-                lastDisplayTriggered = true;
+                newTrigger->lastTrigger = now;
+                newTrigger->lastDisplayTriggered = true;
             }
             
-            wasAboveThreshold = false;
+            newTrigger->wasAboveThreshold = false;
             //peakValue = 0;
         }
     }
     
     // Handle note off
-    if (noteIsOn && now >= noteOffTime) {
-        synth.setNoteOff(0, currentNote, 0);
-        noteIsOn = false;
+    if (newTrigger->noteIsOn && now >= newTrigger->noteOffTime) {
+        synth.setNoteOff(0, newTrigger->note, 0);
+        newTrigger->noteIsOn = false;
     }
-    
-    if (now - lastTrigger > 3333) {
-      peakValue = 0;
-      lastVelocity = 0;
-    }
+}
 
-    // Throttled display updates
-    if (now - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
-        updateDisplay(currentADC, lastVelocity, currentNote, lastDisplayTriggered);
-        lastDisplayUpdate = now;
-        lastDisplayTriggered = false;
+void drawButton( Button* btn, bool isOn ) {
+    // Draw filled rectangle
+    M5.Display.fillRoundRect(btn->x, btn->y, btn->w, btn->h, 10, isOn ? btn->colorOn : btn->colorOff );
+    // Draw border
+    M5.Display.drawRoundRect(btn->x, btn->y, btn->w, btn->h, 10, SKYBLUE );
+
+    // Draw label
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setFont(&fonts::FreeSansBold12pt7b);
+    M5.Display.setTextSize(1);
+
+    // Center text in button
+    int textWidth = M5.Display.textWidth(btn->label);
+    int textX = btn->x + (btn->w - textWidth) / 2;
+    int textY = btn->y + (btn->h / 2) - (M5.Display.fontHeight() / 2);
+
+    M5.Display.setCursor(textX, textY);
+    M5.Display.print(btn->label);
+}
+
+void handleTouchInput() {
+    auto touch = M5.Touch.getDetail();
+
+    if ( touch.wasClicked() ) {
+        int touchX = touch.x;
+        int touchY = touch.y;
+
+         if (touchX >= downButton1.x && touchX <= (downButton1.x + downButton1.w) &&
+            touchY >= downButton1.y && touchY <= (downButton1.y + downButton1.h)) {
+                trigger1.note -= 1;
+                drawUI();
+        }
+        if (touchX >= upButton1.x && touchX <= (upButton1.x + upButton1.w) &&
+            touchY >= upButton1.y && touchY <= (upButton1.y + upButton1.h)) {
+                trigger1.note += 1;
+                 drawUI();
+       }
+
+        if (touchX >= triggerButton1.x && touchX <= (triggerButton1.x + triggerButton1.w) &&
+            touchY >= triggerButton1.y && touchY <= (triggerButton1.y + triggerButton1.h)) {
+                Serial.println("Manual trigger!");
+                synth.setNoteOn(0, trigger1.note, 127);
+                triggerButton1.label = "TRIGGER";
+                drawButton( &triggerButton1, true );
+                delay(100);
+                synth.setNoteOff(0, trigger1.note, 0);
+                triggerButton1.label = "WAITING";
+        }
+
+        if (touchX >= downButton2.x && touchX <= (downButton2.x + downButton2.w) &&
+            touchY >= downButton2.y && touchY <= (downButton2.y + downButton2.h)) {
+                trigger2.note -= 1;
+                drawUI();
+        }
+        if (touchX >= upButton2.x && touchX <= (upButton2.x + upButton2.w) &&
+            touchY >= upButton2.y && touchY <= (upButton2.y + upButton2.h)) {
+                trigger2.note += 1;
+                drawUI();
+        }
+
+        if (touchX >= triggerButton2.x && touchX <= (triggerButton2.x + triggerButton2.w) &&
+            touchY >= triggerButton2.y && touchY <= (triggerButton2.y + triggerButton2.h)) {
+                Serial.println("Manual trigger!");
+                synth.setNoteOn(0, trigger2.note, 127);
+                triggerButton2.label = "TRIGGER";
+                drawButton( &triggerButton2, true );
+                delay(100);
+                synth.setNoteOff(0, trigger2.note, 0);
+                triggerButton2.label = "WAITING";
+        }
     }
+}
+
+void displayMessage(const char* msg) {
+    M5.Display.clear( NORMAL_COLOR );
+    M5.Display.setFont(&fonts::FreeSansBold18pt7b);
+    M5.Display.setTextSize(1);
+    centerCursor(&fonts::FreeSansBold18pt7b, 1, msg);
+    M5.Display.print(msg);
+    Serial.println(msg);
+}
+
+void centerCursor(const lgfx::GFXfont* font, int size, const char* text) {
+    M5.Display.setFont(font);
+    M5.Display.setTextSize(size);
+    int textWidth = M5.Display.textWidth(text);
+    int textHeight = M5.Display.fontHeight();
+    M5.Display.setCursor((M5.Display.width() - textWidth) / 2, 
+                        (M5.Display.height() - textHeight) / 2);
 }
