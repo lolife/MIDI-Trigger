@@ -1,25 +1,26 @@
 #include "main.h"
-//#include "credentials.h"
 
 static Button downButton1 = {10, 100, 60, 60, BLUE, BLUE, "-" };
 static Button upButton1 = {75, 100, 60, 60, BLUE, BLUE, "+" }; // x and y are adjused in setup()
-static Button triggerButton1 = {10, 100, 125, 60, DARKGREY, RED, "WAITING"};
+static Button triggerButton1 = {10, 100, 125, 60, DARKGREY, RED, "TRIGGER 1"};
 static Button upButton2 = {50, 50, 60, 60, BLUE, BLUE, "+" }; // x and y are adjused in setup()
 static Button downButton2 = {115, 100, 60, 60, BLUE, BLUE, "-" };
-static Button triggerButton2 = {50, 100, 125, 60, DARKGREY, RED, "WAITING"};
+static Button triggerButton2 = {50, 100, 125, 60, DARKGREY, RED, "TRIGGER 2"};
 
-static Trigger trigger1;
-static Trigger trigger2;
+static Trigger trigger1 = { TRIGGER_PIN1, 0, KICK, {}, 0, 0, 0, false, false, 0, 0, 0, 0, false, &triggerButton1 };
+static Trigger trigger2 = { TRIGGER_PIN2, 0, SNARE, {}, 0, 0, 0, false, false, 0, 0, 0, 0, false, &triggerButton2 };
 
 int getFilteredADC( Trigger* newTrigger ) {
     // Read raw value
-    int raw = analogRead(newTrigger->pin) - newTrigger->zeroPoint;
-    
+    int raw = newTrigger->zeroPoint - analogRead(newTrigger->pin);
+    return raw;
+
+    delayMicroseconds(10);
     // Update circular buffer
     newTrigger->filterBuffer[newTrigger->filterIndex] = raw;
     newTrigger->filterIndex = (newTrigger->filterIndex + 1) % FILTER_SIZE;
     
-    // Calculate average
+    // // Calculate average
     int sum = 0;
     for (int i = 0; i < FILTER_SIZE; i++) {
         sum += newTrigger->filterBuffer[i];
@@ -66,10 +67,6 @@ void setup() {
     screenWidth = M5.Display.width();
     screenHeight = M5.Display.height();
 
-    // Connect WiFi and setup time
-    //if (! initializeWiFi())
-    //    displayMessage("No Network");
-
     int top = screenHeight/2 - 20;
     downButton1.y = top;
     upButton1.y = top;
@@ -83,11 +80,10 @@ void setup() {
     upButton2.x = screenWidth/2 + downButton2.w + 5;
     triggerButton2.x = screenWidth/2;
 
+    initializeTrigger( &trigger2 );
+    initializeTrigger( &trigger1 );
 
     synth.begin( &Serial2, BAUD_RATE, TX_PIN, RX_PIN );
-
-    initializeTrigger( &trigger1, TRIGGER_PIN2, KICK, &triggerButton1 );
-    initializeTrigger( &trigger2, TRIGGER_PIN1, SNARE, &triggerButton2 );
 
     Serial.printf("Trigger pin G%d, note %d, zeropoint %d\n", trigger1.pin, trigger1.note, trigger1.zeroPoint );
     Serial.printf("Trigger pin G%d, note %d, zeropoint %d\n", trigger2.pin, trigger2.note, trigger2.zeroPoint );
@@ -95,13 +91,12 @@ void setup() {
     drawUI();
 }
 
-void initializeTrigger( Trigger* newTrigger, int pin, int note, Button* tButton ) {
-    newTrigger->pin = pin;
-    newTrigger->note = note;
-    pinMode( newTrigger->pin, INPUT_PULLDOWN );
+void initializeTrigger( Trigger* newTrigger ) {
+    pinMode( newTrigger->pin, INPUT );
+    analogSetAttenuation(ADC_11db);  // Set ADC range to 0-3.3V
+    analogReadResolution(12);         // Explicit 12-bit resolution
     newTrigger->zeroPoint = calibrateTrigger( newTrigger->pin );
     initializeFilterBuffer( newTrigger );
-    newTrigger->triggerButton = tButton;
 }
 
 void initializeFilterBuffer( Trigger* newTrigger ) {
@@ -110,40 +105,14 @@ void initializeFilterBuffer( Trigger* newTrigger ) {
     }
 }
 
-bool initializeWiFi() {
-    displayMessage("Connecting");
-    WiFi.mode(WIFI_STA);
-    WiFi.begin( WIFI_SSID, WIFI_PASSWORD );
-    WiFi.setAutoReconnect(true);
-
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-        delay(500);
-        attempts++;
-    }
-    
-    bool connected = (WiFi.status() == WL_CONNECTED);
-    
-    if (connected) {     
-        String ip = WiFi.localIP().toString();
-        displayMessage(ip.c_str());
-    } else {
-        displayMessage("Network failed!");
-        return connected;
-    }
-
-    ArduinoOTA.begin();
-    ArduinoOTA.handle();
-
-    return connected;
-}
-
 int calibrateTrigger( int inputPin ) {
     // Calibrate zero points
     int total = 0;
     for (int i = 0; i < 50; i++) {
-        total += analogRead( inputPin );
-        delay(10);
+        int raw = analogRead( inputPin );
+        total += raw;
+        //Serial.printf( "%d, %d\n", raw, total);
+        delay(5);
     }
     return(total / 50);
 }
@@ -157,72 +126,81 @@ void loop() {
     unsigned long now = millis();
     
     handleTrigger( &trigger1 );
+    //delayMicroseconds(10);
     handleTrigger( &trigger2 );
 
     // Throttled display updates
-    if (now - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
-
-        updateDisplay();
+   if (now - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
+       updateDisplay();
         trigger1.lastDisplayTriggered = false;
         trigger2.lastDisplayTriggered = false;
 
-        lastDisplayUpdate = now;
+       lastDisplayUpdate = now;
     }
 }
 
 void handleTrigger( Trigger* newTrigger ) {
     unsigned long now = millis();
     newTrigger->currentADC = getFilteredADC( newTrigger );  // Use filtered value
-    
+    //if(newTrigger->currentADC > 1 )
+    //    Serial.printf( "%d, ", newTrigger->currentADC );
+
     // State machine with hysteresis
     if (!newTrigger->wasAboveThreshold) {
         // Waiting for trigger
         if (newTrigger->currentADC > THRESHOLD) {
+            //Serial.println( "Above THRESHOLD");
             newTrigger->samplesAboveThreshold++;
             if (newTrigger->samplesAboveThreshold >= MIN_TRIGGER_DURATION) {
                 // Confirmed trigger start
+                //Serial.println( "Trigger start");
                 newTrigger->wasAboveThreshold = true;
                 newTrigger->peakValue = newTrigger->currentADC;
                 newTrigger->samplesAboveThreshold = 0;
             }
-        } else {
-            newTrigger->samplesAboveThreshold = 0;
+            else
+                Serial.println( "Failed" );
         }
+        else {
+             newTrigger->samplesAboveThreshold = 0;
+         }
     } else {
         // In triggered state - track peak
         if (newTrigger->currentADC > newTrigger->peakValue) {
             newTrigger->peakValue = newTrigger->currentADC;
         }
-        
+       
         // Wait for signal to drop below threshold minus hysteresis
-        if (newTrigger->currentADC < (THRESHOLD - HYSTERESIS)) {
+        if (newTrigger->currentADC < THRESHOLD ) {
             // Trigger complete - send MIDI
-            if (now - newTrigger->lastTrigger > MIN_HIT_INTERVAL) {
-                newTrigger->lastVelocity = map(newTrigger->peakValue, THRESHOLD, 4095-newTrigger->zeroPoint, 8, 127);
-                newTrigger->lastVelocity = constrain(newTrigger->lastVelocity, 24, 127);
-        
+            //if (now - newTrigger->lastTrigger > MIN_HIT_INTERVAL) {
+                newTrigger->lastVelocity = map(newTrigger->peakValue, THRESHOLD, newTrigger->zeroPoint, 48, 137);
+                newTrigger->lastVelocity = constrain(newTrigger->lastVelocity, 1, 127);
+                //Serial.printf("\nNote %d ON Peak: %d Velocity: %d\n", newTrigger->note, newTrigger->peakValue, newTrigger->lastVelocity );
+
                 synth.setNoteOn(0, newTrigger->note, newTrigger->lastVelocity);
                 newTrigger->noteIsOn = true;
                 newTrigger->noteOffTime = now + NOTE_DURATION;
-                newTrigger->triggerButton->label = "TRIGGER";
+                //newTrigger->triggerButton->label = "TRIGGER";
                 drawButton( newTrigger->triggerButton, true );
-                newTrigger->triggerButton->label = "WAITING";
-                
-                Serial.printf("Trigger %d Peak: %d, Velocity: %d\n", newTrigger->note, newTrigger->peakValue, newTrigger->lastVelocity);
-                
+                //newTrigger->triggerButton->label = "WAITING";
                 newTrigger->lastTrigger = now;
                 newTrigger->lastDisplayTriggered = true;
-            }
+            //}
             
             newTrigger->wasAboveThreshold = false;
-            //peakValue = 0;
+            //newTrigger->peakValue = 0;
         }
+        //else
+        //    Serial.println( "trigger continues..." );
     }
     
     // Handle note off
     if (newTrigger->noteIsOn && now >= newTrigger->noteOffTime) {
+        //Serial.printf("Note %d OFF Peak: %d Velocity: %d\n\n", newTrigger->note, newTrigger->peakValue, newTrigger->lastVelocity );
         synth.setNoteOff(0, newTrigger->note, 0);
         newTrigger->noteIsOn = false;
+        newTrigger->peakValue = 0;
     }
 }
 
@@ -266,7 +244,7 @@ void handleTouchInput() {
 
         if (touchX >= triggerButton1.x && touchX <= (triggerButton1.x + triggerButton1.w) &&
             touchY >= triggerButton1.y && touchY <= (triggerButton1.y + triggerButton1.h)) {
-                Serial.println("Manual trigger!");
+                //Serial.println("Manual trigger!");
                 synth.setNoteOn(0, trigger1.note, 127);
                 triggerButton1.label = "TRIGGER";
                 drawButton( &triggerButton1, true );
@@ -288,7 +266,7 @@ void handleTouchInput() {
 
         if (touchX >= triggerButton2.x && touchX <= (triggerButton2.x + triggerButton2.w) &&
             touchY >= triggerButton2.y && touchY <= (triggerButton2.y + triggerButton2.h)) {
-                Serial.println("Manual trigger!");
+                //Serial.println("Manual trigger!");
                 synth.setNoteOn(0, trigger2.note, 127);
                 triggerButton2.label = "TRIGGER";
                 drawButton( &triggerButton2, true );
@@ -305,7 +283,7 @@ void displayMessage(const char* msg) {
     M5.Display.setTextSize(1);
     centerCursor(&fonts::FreeSansBold18pt7b, 1, msg);
     M5.Display.print(msg);
-    Serial.println(msg);
+    //Serial.println(msg);
 }
 
 void centerCursor(const lgfx::GFXfont* font, int size, const char* text) {
