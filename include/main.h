@@ -61,11 +61,11 @@ char currentNoteName[32] = "Kick";
 
 M5UnitSynth synth;
 
-const int THRESHOLD = 16;
-const int HYSTERESIS = 0;        // Signal must drop this far below threshold to reset
-const int MIN_TRIGGER_DURATION = 1; // Signal must stay above threshold for this many samples
-const int MIN_HIT_INTERVAL = 15;
-const int NOTE_DURATION = 30;
+const int THRESHOLD = 150;
+const int HYSTERESIS = THRESHOLD/2;        // Signal must drop this far below threshold to reset
+const int MIN_TRIGGER_DURATION = 4; // Signal must stay above threshold for this many samples
+const int MIN_HIT_INTERVAL = 45;
+const int NOTE_DURATION = 45;
 
 // Display update throttling
 #define NORMAL_COLOR TFT_OLIVE
@@ -87,3 +87,8 @@ void handleTouchInput();
 void drawButton( Button* btn, bool isOn );
 void displayMessage(const char* msg);
 void centerCursor(const lgfx::GFXfont* font, int size, const char* text);
+void plot_trigger_data( Trigger* newTrigger );
+void get_trigger_data( Trigger* newTrigger );
+void initTData();
+int cstrain( int val, int lo, int hi );
+void run_test();
