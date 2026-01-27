@@ -27,15 +27,16 @@ int getFilteredADC( Trigger* newTrigger ) {
     //newTrigger->filterIndex = (newTrigger->filterIndex + 1) % FILTER_SIZE;
     
     // // Calculate average
-    int sum = 0;
-    for (int i = 0; i < 3; i++) {
+   // int sum = 0;
+    //for (int i = 0; i < 3; i++) {
         //sum += newTrigger->filterBuffer[i];
 //        sum += newTrigger->zeroPoint - analogRead(newTrigger->pin);
-        sum += analogRead(newTrigger->pin);
+     //   sum += analogRead(newTrigger->pin);
         //sum += analogRead(newTrigger->pin);
         //delay(1);
-    }
-    return (sum/3) - newTrigger->zeroPoint;
+   // }
+    //return (sum/3) - newTrigger->zeroPoint;
+    return analogRead(newTrigger->pin) - newTrigger->zeroPoint;
 }
 
 void drawUI() {
@@ -124,13 +125,13 @@ int calibrateTrigger( int inputPin ) {
         int raw = analogRead( inputPin );
         delay(1);
         total += raw;
-        Serial.printf( "%d, %d\n", raw, total);
+        Serial.printf( "%.2f\n", (float)total/(float)(i+1));
     }
     return(total / 50);
 }
 
 void initTData() {
-    for( int i = 0; i < 10240; i++ ) {
+    for( int i = 0; i < 44100; i++ ) {
         tData[i]=0;
     }
 }
@@ -144,7 +145,7 @@ void loop() {
     unsigned long now = millis();
     
     //run_test();
-
+    //return;
 
     handleTrigger( &trigger1 );
     handleTrigger( &trigger2 );
@@ -201,6 +202,7 @@ void plot_trigger_data( Trigger* newTrigger ) {
     M5.Display.clear( TFT_BLUE );
 //    M5.Display.setColor( BLUE );
 //    M5.Display.fillRect( 0, 0, screenWidth, screenHeight, BLUE );
+    int pixelWidth = screenWidth/(n-tStart);
     M5.Display.setColor( SILVER );
     for( int i = 0; i<n-tStart; i++ ) {
         if( tStart+i > MAX_SAMPLES )
@@ -209,24 +211,27 @@ void plot_trigger_data( Trigger* newTrigger ) {
             samplesAboveThreshold++;
         else
             samplesBelowThreshold++;
-        int lineHeight = map( tData[tStart+i], THRESHOLD, newTrigger->peakValue, 0, screenHeight-20 );
+        int lineHeight = map( tData[tStart+i], 0, newTrigger->peakValue, 0, screenHeight-20 );
         lineHeight = cstrain( lineHeight, 0, screenHeight-20 );
-        if( tData[tStart+i] > 0 )
-                Serial.printf( "%d -> %d\n", tData[tStart+i], lineHeight );
-        M5.Display.drawLine( i, screenHeight-lineHeight, i, screenHeight );
+//        if( tData[tStart+i] > 0 )
+//                Serial.printf( "%d,%d\n", i*240, tData[tStart+i] );
+        M5.Display.drawWideLine( i*pixelWidth, screenHeight-lineHeight, i*pixelWidth, screenHeight, pixelWidth, SILVER );
     }
-    Serial.printf("%d:%d\n", samplesAboveThreshold, samplesBelowThreshold );
+    int thresholdLine = map( THRESHOLD, 0, newTrigger->peakValue, 0, screenHeight-20 );
+    M5.Display.drawWideLine( 0, screenHeight-thresholdLine, screenWidth, screenHeight-thresholdLine, 2, RED );
+    int hystLine = map( HYSTERESIS, 0, newTrigger->peakValue, 0, screenHeight-20 );
+    M5.Display.drawWideLine( 0, screenHeight-hystLine, screenWidth, screenHeight-hystLine, 2, GREEN );
+    Serial.printf("%d:%d:%d\n", samplesAboveThreshold, samplesBelowThreshold, pixelWidth );
 }
 
 void get_trigger_data( Trigger* newTrigger ) {
-    //Serial.println( "get_trigger_data" );
-
     unsigned long now = millis();
     newTrigger->currentADC =  getFilteredADC( newTrigger );
     tData[n]= newTrigger->currentADC;
 
     // State machine with hysteresis
     if (!newTrigger->wasAboveThreshold) {
+
         // Waiting for trigger
         if (newTrigger->currentADC > THRESHOLD) {
             //Serial.println( "Above THRESHOLD");
@@ -234,7 +239,7 @@ void get_trigger_data( Trigger* newTrigger ) {
             if (newTrigger->samplesAboveThreshold >= MIN_TRIGGER_DURATION) {
                 // Confirmed trigger start
                 tStart = n-newTrigger->samplesAboveThreshold;
-                Serial.printf( "Trigger start with %d samples\n", newTrigger->samplesAboveThreshold );
+                Serial.printf( "Trigger at %d with %d samples\n", millis(), newTrigger->samplesAboveThreshold );
                 newTrigger->wasAboveThreshold = true;
                 newTrigger->peakValue = newTrigger->currentADC;
                 newTrigger->samplesAboveThreshold = 0;
@@ -246,6 +251,7 @@ void get_trigger_data( Trigger* newTrigger ) {
              newTrigger->samplesAboveThreshold = 0;
          }
     } else {
+        //Serial.printf("%d,%d\n", micros(), newTrigger->currentADC );
         // In triggered state - track peak
         if (newTrigger->currentADC > newTrigger->peakValue) {
             newTrigger->peakValue = newTrigger->currentADC;
@@ -256,33 +262,17 @@ void get_trigger_data( Trigger* newTrigger ) {
             // Trigger complete - send MIDI
             if (now - newTrigger->lastTrigger > MIN_HIT_INTERVAL) {
                 testDone = true;
+                Serial.printf("%d: Note %d ON Peak: %d Velocity: %d\n", millis(), newTrigger->note, newTrigger->peakValue, newTrigger->lastVelocity );
                 return;
-                newTrigger->lastVelocity = map(newTrigger->peakValue, THRESHOLD, newTrigger->zeroPoint, 0, 127);
-                newTrigger->lastVelocity = constrain(newTrigger->lastVelocity, 24, 127);
-                //Serial.printf("Note %d ON Peak: %d Velocity: %d\n", newTrigger->note, newTrigger->peakValue, newTrigger->lastVelocity );
-
-                synth.setNoteOn(0, newTrigger->note, newTrigger->lastVelocity);
-                newTrigger->noteIsOn = true;
-                newTrigger->noteOffTime = now + NOTE_DURATION;
-                //newTrigger->triggerButton->label = "TRIGGER";
-                drawButton( newTrigger->triggerButton, true );
-                //newTrigger->triggerButton->label = "WAITING";
-                newTrigger->lastTrigger = now;
-                newTrigger->lastDisplayTriggered = true;
             }
-            
             newTrigger->wasAboveThreshold = false;
             newTrigger->peakValue = 0;
         }
-        //else
-        //    Serial.println( "trigger continues..." );
     }
 }
 
 void handleTrigger( Trigger* newTrigger ) {
-    unsigned long now = millis();
     newTrigger->currentADC =  getFilteredADC( newTrigger );
-
     // State machine with hysteresis
     if (!newTrigger->wasAboveThreshold) {
         // Waiting for trigger
@@ -296,8 +286,6 @@ void handleTrigger( Trigger* newTrigger ) {
                 newTrigger->peakValue = newTrigger->currentADC;
                 newTrigger->samplesAboveThreshold = 0;
             }
-            //else
-            //    Serial.println( "Failed" );
         }
         else {
              newTrigger->samplesAboveThreshold = 0;
@@ -311,10 +299,11 @@ void handleTrigger( Trigger* newTrigger ) {
         // Wait for signal to drop below threshold minus hysteresis
         if (newTrigger->currentADC < THRESHOLD + HYSTERESIS ) {
             // Trigger complete - send MIDI
+            unsigned long now = millis();
             if (now - newTrigger->lastTrigger > MIN_HIT_INTERVAL) {
-                newTrigger->lastVelocity = map(newTrigger->peakValue, THRESHOLD, 4095-newTrigger->zeroPoint, 32, 127);
+                newTrigger->lastVelocity = map(newTrigger->peakValue, 0, 4095-newTrigger->zeroPoint, 0, 127);
                 newTrigger->lastVelocity = constrain(newTrigger->lastVelocity, 24, 127);
-                Serial.printf("Note %d ON Peak: %d Velocity: %d\n", newTrigger->note, newTrigger->peakValue, newTrigger->lastVelocity );
+                //Serial.printf("Note %d ON at %d Peak: %d Velocity: %d\n", newTrigger->note, millis(), newTrigger->peakValue, newTrigger->lastVelocity );
 
                 synth.setNoteOn(0, newTrigger->note, newTrigger->lastVelocity);
                 newTrigger->noteIsOn = true;
@@ -334,7 +323,7 @@ void handleTrigger( Trigger* newTrigger ) {
     }
     
     // Handle note off
-    if (newTrigger->noteIsOn && now >= newTrigger->noteOffTime) {
+    if (newTrigger->noteIsOn && millis() >= newTrigger->noteOffTime) {
         //Serial.printf("Note %d OFF Peak: %d Velocity: %d\n\n", newTrigger->note, newTrigger->peakValue, newTrigger->lastVelocity );
         synth.setNoteOff(0, newTrigger->note, 0);
         newTrigger->noteIsOn = false;

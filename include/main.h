@@ -61,11 +61,11 @@ char currentNoteName[32] = "Kick";
 
 M5UnitSynth synth;
 
-const int THRESHOLD = 150;
+const int THRESHOLD = 300;
 const int HYSTERESIS = THRESHOLD/2;        // Signal must drop this far below threshold to reset
 const int MIN_TRIGGER_DURATION = 4; // Signal must stay above threshold for this many samples
-const int MIN_HIT_INTERVAL = 45;
-const int NOTE_DURATION = 45;
+const int MIN_HIT_INTERVAL = 80;
+const int NOTE_DURATION = MIN_HIT_INTERVAL;
 
 // Display update throttling
 #define NORMAL_COLOR TFT_OLIVE
