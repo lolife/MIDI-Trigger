@@ -34,16 +34,14 @@ struct Trigger {
     Button* triggerButton;
 };
 
-//#define ARDUINO_M5STACK_CORES2
-
 #define BAUD_RATE 31250
 
-#if defined(ARDUINO_M5STACK_CORES2)
-#define TRIGGER_PIN1 G36
-#define TRIGGER_PIN2 G26
-#define RX_PIN 13
-#define TX_PIN 14
-#elif defined(ARDUINO_M5STACK_CORES3)
+#ifdef ARDUINO_M5Stack_Core_ESP32
+#define TRIGGER_PIN1 G36 // Port B white
+#define TRIGGER_PIN2 G26 // Port B yellow
+#define RX_PIN 17        // Port C white
+#define TX_PIN 16        // Port C yellow
+#elifdef ARDUINO_M5STACK_CORES3
 #define TRIGGER_PIN1 G9
 #define TRIGGER_PIN2 G8
 #define RX_PIN 18
