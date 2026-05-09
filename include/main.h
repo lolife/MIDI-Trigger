@@ -42,8 +42,8 @@ struct Trigger {
 #define RX_PIN 17        // Port C white
 #define TX_PIN 16        // Port C yellow
 #elifdef ARDUINO_M5STACK_CORES3
-#define TRIGGER_PIN1 G9
-#define TRIGGER_PIN2 G8
+#define TRIGGER_PIN1 GPIO_NUM_1
+#define TRIGGER_PIN2 GPIO_NUM_8
 #define RX_PIN 18
 #define TX_PIN 17
 #endif
